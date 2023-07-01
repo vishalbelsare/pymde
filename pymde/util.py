@@ -147,9 +147,11 @@ def proj_standardized(X, demean=False, inplace=False):
     # proj *= torch.sqrt(n)
     if inplace:
         s = torch.zeros(m, device=X.device, dtype=X.dtype)
-        V = torch.zeros((m, m), device=X.device, dtype=X.dtype)
+        Vh = torch.zeros((m, m), device=X.device, dtype=X.dtype)
+        U = torch.zeros(X.shape, device=X.device, dtype=X.dtype)
         try:
-            U, _, V = torch.svd(X, out=(X, s, V))
+            U, _, Vh = torch.linalg.svd(X, full_matrices=False, out=(U, s, Vh))
+            V = Vh.transpose(-2, -1)
         except RuntimeError as e:
             X.requires_grad_(requires_grad)
             raise SolverError(str(e))
@@ -159,7 +161,8 @@ def proj_standardized(X, demean=False, inplace=False):
         return X
     else:
         try:
-            U, _, V = torch.svd(X)
+            U, _, Vh = torch.linalg.svd(X, full_matrices=False)
+            V = Vh.transpose(-2, -1)
         except RuntimeError as e:
             X.requires_grad_(requires_grad)
             raise SolverError(str(e))
@@ -168,22 +171,37 @@ def proj_standardized(X, demean=False, inplace=False):
         return proj
 
 
-def adjacency_matrix(n, m, edges, weights):
-    if isinstance(weights, torch.Tensor):
-        weights = weights.detach().cpu().numpy()
-    if isinstance(edges, torch.Tensor):
-        edges = edges.detach().cpu().numpy()
-    A = scipy.sparse.coo_matrix(
-        (weights, (edges[:, 0], edges[:, 1])), shape=(n, n), dtype=np.float32
-    )
-    A = A + A.T
-    return A.tocoo()
+def adjacency_matrix(n, m, edges, weights, use_scipy=True):
+
+    if use_scipy:
+        if isinstance(weights, torch.Tensor):
+            weights = weights.detach().cpu().numpy()
+        if isinstance(edges, torch.Tensor):
+            edges = edges.detach().cpu().numpy()
+        A = scipy.sparse.coo_matrix(
+            (weights, (edges[:, 0], edges[:, 1])),
+            shape=(n, n),
+            dtype=np.float32,
+        )
+        A = A + A.T
+        return A.tocoo()
+    else:
+        A = torch.sparse_coo_tensor(
+            edges.transpose(0, 1),
+            weights,
+            size=(n, n),
+            dtype=torch.float32,
+            device=edges.device,
+        )
+        A = A + A.transpose(0, 1)
+        return A
 
 
 @tensor_arguments
 def procrustes(X_source, X_target):
     """min |X_source Q - X_target|_F s.t. Q^TQ = I"""
-    U, _, V = torch.svd(X_target.T @ X_source)
+    U, _, Vh = torch.linalg.svd(X_target.T @ X_source, full_matrices=False)
+    V = Vh.transpose(-2, -1)
     return V @ U.T
 
 
@@ -317,7 +335,7 @@ def align(source, target):
 def scale_delta(delta, d_nat):
     # scale delta so RMS(delta) == d_nat
     N = delta.nelement()
-    rms = torch.sqrt(1 / N * torch.sum(delta ** 2))
+    rms = torch.sqrt(1 / N * torch.sum(delta**2))
     return delta * d_nat / rms
 
 

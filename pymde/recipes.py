@@ -63,8 +63,8 @@ def _remove_anchor_anchor_edges(edges, data, anchors, opt=None, blk=1e8):
         estep = int(blk / na)
         assert estep > 0
 
-        msk0 = torch.zeros(ne, dtype=torch.bool, device=edges.get_device())
-        msk1 = torch.zeros(ne, dtype=torch.bool, device=edges.get_device())
+        msk0 = torch.zeros(ne, dtype=torch.bool, device=edges.device)
+        msk1 = torch.zeros(ne, dtype=torch.bool, device=edges.device)
         e = 0
         while e < ne:
             ehi = e + estep if e + estep < ne else ne
@@ -79,8 +79,8 @@ def _remove_anchor_anchor_edges(edges, data, anchors, opt=None, blk=1e8):
         assert astep > 0
         assert estep > 0
 
-        msk0 = torch.zeros(ne, dtype=torch.bool, device=edges.get_device())
-        msk1 = torch.zeros(ne, dtype=torch.bool, device=edges.get_device())
+        msk0 = torch.zeros(ne, dtype=torch.bool, device=edges.device)
+        msk1 = torch.zeros(ne, dtype=torch.bool, device=edges.device)
         e = 0
         while e < ne:
             ehi = e + estep if e + estep < ne else ne
@@ -292,7 +292,11 @@ def preserve_neighbors(
         If not None, neighborhoods are restricted to have a radius
         no greater than ``max_distance``.
     init: str
-        Initialization strategy; 'quadratic' or 'random'.
+        Initialization strategy; 'quadratic' or 'random'. If the quadratic
+        initialization takes too much time, try a random initialization.
+        When `device=='cuda'` and `init=='quadratic'` a torch-implemented
+        version will be used, which is fully on device, but uses a CG-based
+        technique (versus Lanczos).
     device: str (optional)
         Device for the embedding (eg, 'cpu', 'cuda').
     verbose: bool
@@ -357,9 +361,17 @@ def preserve_neighbors(
 
     if init == "quadratic":
         if verbose:
-            problem.LOGGER.info("Computing quadratic initialization.")
+            problem.LOGGER.info(f"Computing {init} initialization.")
+        # use cg + torch when using GPU
+        cg = device == "cuda"
         X_init = quadratic.spectral(
-            n, embedding_dim, edges, weights, device=device
+            n,
+            embedding_dim,
+            edges,
+            weights,
+            max_iter=1000,
+            device=device,
+            cg=cg,
         )
         if not isinstance(
             constraint, (constraints._Centered, constraints._Standardized)
